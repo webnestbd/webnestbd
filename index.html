@@ -438,6 +438,9 @@ input:focus,select:focus,textarea:focus{border-color:var(--primary);box-shadow:0
 .nav-menu{display:none}
 }
 </style>
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js"></script>
 </head>
 <body>
 
@@ -1022,6 +1025,32 @@ Designed & Developed By <a href="https://phonelab360.github.io/webnestbd/" targe
 </div>
 
 <script>
+// ============= FIREBASE CONFIG =============
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyBEVuacmdlDogQVXP-38xzTYfgNUXjP8UM",
+  authDomain: "webnest-bd.firebaseapp.com",
+  projectId: "webnest-bd",
+  storageBucket: "webnest-bd.firebasestorage.app",
+  messagingSenderId: "711176424285",
+  appId: "1:711176424285:web:e97ff48a60b4812dc336b4",
+  measurementId: "G-DZFSDEYNBQ"
+};
+
+// ============= FIREBASE INITIALIZATION =============
+let db = null;
+let firebaseReady = false;
+let localCache = null;
+let isInitializing = false;
+
+try {
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.database();
+  firebaseReady = true;
+} catch(e) {
+  console.error('Firebase initialization error:', e);
+}
+
 // ============= DEFAULT DATA =============
 const DEF = {
 site:{
@@ -1125,13 +1154,121 @@ let editSlideId=null;
 let editReviewId=null;
 let currentFilter='all';
 
-// ============= DATA =============
-function getData(){
-let d=localStorage.getItem('wnbData');
-if(!d){let init=JSON.parse(JSON.stringify(DEF));localStorage.setItem('wnbData',JSON.stringify(init));return init}
-return JSON.parse(d);
+// ============= DATA MANAGEMENT =============
+let dbReady = false;
+
+// Initialize Firebase data
+async function initFirebaseData(){
+  if(isInitializing) return;
+  if(!firebaseReady) return;
+  
+  isInitializing = true;
+  
+  try {
+    // প্রথমে local backup থেকে লোড করি
+    let backup = localStorage.getItem('wnbData');
+    if(backup) localCache = JSON.parse(backup);
+    
+    // Firebase থেকে ডেটা চেক করি
+    const snapshot = await db.ref('wnbData').get();
+    
+    if(snapshot.exists()) {
+      // Firebase এ ডেটা আছে
+      localCache = snapshot.val();
+    } else {
+      // Firebase এ ডেটা নেই, default data দিয়ে create করি
+      if(!localCache) localCache = JSON.parse(JSON.stringify(DEF));
+      await db.ref('wnbData').set(localCache);
+    }
+    
+    // Local backup update করি
+    localStorage.setItem('wnbData', JSON.stringify(localCache));
+    
+    dbReady = true;
+    
+    // Real-time listener শুরু করি
+    setupRealtimeListener();
+    
+  } catch(error) {
+    console.error('Firebase init error:', error);
+    // Fallback to localStorage
+    let backup = localStorage.getItem('wnbData');
+    localCache = backup ? JSON.parse(backup) : JSON.parse(JSON.stringify(DEF));
+    dbReady = true;
+  }
+  
+  isInitializing = false;
 }
-function saveData(d){localStorage.setItem('wnbData',JSON.stringify(d))}
+
+// Real-time listener
+function setupRealtimeListener(){
+  if(!firebaseReady) return;
+  
+  let firstLoad = true;
+  
+  db.ref('wnbData').on('value', (snapshot) => {
+    if(snapshot.exists()) {
+      const newData = snapshot.val();
+      
+      // প্রথম load ছাড়া যখন অন্যদের থেকে আপডেট আসে
+      if(!firstLoad && JSON.stringify(newData) !== JSON.stringify(localCache)) {
+        localCache = newData;
+        localStorage.setItem('wnbData', JSON.stringify(localCache));
+        
+        // Notification দেখাই
+        showUpdateNotification();
+      }
+      
+      firstLoad = false;
+    }
+  }, (error) => {
+    console.error('Real-time listener error:', error);
+  });
+}
+
+// নতুন ডেটা আপডেটের জন্য notification
+function showUpdateNotification(){
+  let notifBar = document.getElementById('updateNotification');
+  if(!notifBar) {
+    notifBar = document.createElement('div');
+    notifBar.id = 'updateNotification';
+    notifBar.style.cssText = 'position:fixed;top:0;left:0;right:0;background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:16px;text-align:center;z-index:99998;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,0.15)';
+    notifBar.innerHTML = '🔄 নতুন আপডেট পাওয়া গেছে। <strong>এখানে ক্লিক করুন বা পেজ রিফ্রেশ করুন</strong>';
+    notifBar.onclick = () => location.reload();
+    document.body.appendChild(notifBar);
+  }
+}
+
+// getData function
+function getData(){
+  // যদি Firebase থেকে এখনো load না হয়েছে, local cache থেকে দি
+  if(!dbReady) {
+    let backup = localStorage.getItem('wnbData');
+    if(!backup) {
+      localCache = JSON.parse(JSON.stringify(DEF));
+      localStorage.setItem('wnbData', JSON.stringify(localCache));
+    } else {
+      localCache = JSON.parse(backup);
+    }
+  }
+  return localCache;
+}
+
+// saveData function
+function saveData(d){
+  localCache = d;
+  
+  // Local backup update করি
+  localStorage.setItem('wnbData', JSON.stringify(d));
+  
+  // Firebase এ sync করি (async, blocking না করে)
+  if(firebaseReady && db) {
+    db.ref('wnbData').set(d).catch(error => {
+      console.error('Save to Firebase error:', error);
+      toast('অনলাইন সংযোগ সমস্যা - স্থানীয়ভাবে সেভ হয়েছে', 'warning');
+    });
+  }
+}
 function saveCart(){localStorage.setItem('wnbCart',JSON.stringify(cart));updCartCount()}
 function updCartCount(){document.getElementById('cartCount').textContent=cart.reduce((a,b)=>a+b.qty,0)}
 
@@ -2239,11 +2376,23 @@ saveData(d);toast('ইমেইল আপডেট হয়েছে ✅');
 }
 
 // ============= INIT =============
-function init(){
+async function init(){
+// Firebase data initialize করি
+await initFirebaseData();
+
+// UI initialize করি
 updCartCount();
 renderHome();
 if(window.location.hash==='#admin')showAdminLogin();
+
+// Status indicator (optional)
+if(firebaseReady) {
+  console.log('✅ Firebase সংযুক্ত হয়েছে');
+} else {
+  console.warn('⚠️ Firebase অফলাইন মোডে কাজ করছে');
 }
+}
+
 window.addEventListener('hashchange',()=>{if(window.location.hash==='#admin')showAdminLogin()});
 init();
 </script>

@@ -1200,73 +1200,76 @@ async function initFirebaseData(){
   isInitializing = false;
 }
 
-// Real-time listener
+// Real-time listener - সঠিক ভাবে
 function setupRealtimeListener(){
-  if(!firebaseReady) return;
+  if(!firebaseReady || !db) return;
   
-  let firstLoad = true;
+  console.log('🔄 Real-time listener শুরু হয়েছে');
   
   db.ref('wnbData').on('value', (snapshot) => {
     if(snapshot.exists()) {
-      const newData = snapshot.val();
+      const firebaseData = snapshot.val();
       
-      // প্রথম load ছাড়া যখন অন্যদের থেকে আপডেট আসে
-      if(!firstLoad && JSON.stringify(newData) !== JSON.stringify(localCache)) {
-        localCache = newData;
-        localStorage.setItem('wnbData', JSON.stringify(localCache));
+      // যদি Firebase ডেটা local cache এর সাথে ভিন্ন হয়
+      if(JSON.stringify(firebaseData) !== JSON.stringify(localCache)) {
+        console.log('📡 Firebase থেকে নতুন ডেটা এসেছে');
         
-        // Notification দেখাই
-        showUpdateNotification();
+        localCache = firebaseData;
+        localStorage.setItem('wnbData', JSON.stringify(firebaseData));
+        
+        // UI automatically update হয়ে যাবে আগামী page load এ
+        // অথবা manual update এর জন্য:
+        try {
+          renderHome(); // Home page পুনরায় রেন্ডার করি
+        } catch(e) {
+          console.log('renderHome not ready yet');
+        }
       }
-      
-      firstLoad = false;
     }
   }, (error) => {
     console.error('Real-time listener error:', error);
   });
 }
 
-// নতুন ডেটা আপডেটের জন্য notification
-function showUpdateNotification(){
-  let notifBar = document.getElementById('updateNotification');
-  if(!notifBar) {
-    notifBar = document.createElement('div');
-    notifBar.id = 'updateNotification';
-    notifBar.style.cssText = 'position:fixed;top:0;left:0;right:0;background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:16px;text-align:center;z-index:99998;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,0.15)';
-    notifBar.innerHTML = '🔄 নতুন আপডেট পাওয়া গেছে। <strong>এখানে ক্লিক করুন বা পেজ রিফ্রেশ করুন</strong>';
-    notifBar.onclick = () => location.reload();
-    document.body.appendChild(notifBar);
-  }
-}
-
-// getData function
+// getData function - সবসময় Firebase থেকে চেক করি
 function getData(){
-  // যদি Firebase থেকে এখনো load না হয়েছে, local cache থেকে দি
-  if(!dbReady) {
-    let backup = localStorage.getItem('wnbData');
-    if(!backup) {
-      localCache = JSON.parse(JSON.stringify(DEF));
-      localStorage.setItem('wnbData', JSON.stringify(localCache));
-    } else {
-      localCache = JSON.parse(backup);
-    }
+  // যদি Firebase থেকে load হয়ে গেছে, সেটাই দি
+  if(dbReady && localCache) {
+    return localCache;
+  }
+  
+  // নাহলে localStorage থেকে
+  let backup = localStorage.getItem('wnbData');
+  if(!backup) {
+    localCache = JSON.parse(JSON.stringify(DEF));
+    localStorage.setItem('wnbData', JSON.stringify(localCache));
+  } else {
+    localCache = JSON.parse(backup);
   }
   return localCache;
 }
 
-// saveData function
+// saveData function - সঠিক ভাবে sync করি
 function saveData(d){
+  if(!d) return;
+  
   localCache = d;
   
-  // Local backup update করি
+  // 1. সাথে সাথে localStorage এ save করি (instant feedback)
   localStorage.setItem('wnbData', JSON.stringify(d));
   
-  // Firebase এ sync করি (async, blocking না করে)
+  // 2. Firebase এ write করি (background এ)
   if(firebaseReady && db) {
-    db.ref('wnbData').set(d).catch(error => {
-      console.error('Save to Firebase error:', error);
-      toast('অনলাইন সংযোগ সমস্যা - স্থানীয়ভাবে সেভ হয়েছে', 'warning');
-    });
+    db.ref('wnbData').set(d)
+      .then(() => {
+        console.log('✅ ডেটা Firebase এ সফলভাবে সেভ হয়েছে');
+      })
+      .catch(error => {
+        console.error('❌ Firebase Save Error:', error);
+        toast('সংযোগ সমস্যা - শুধু স্থানীয়ভাবে সেভ হয়েছে', 'warning');
+      });
+  } else {
+    console.log('⚠️ Firebase Ready নয়, শুধু Local Storage এ সেভ');
   }
 }
 function saveCart(){localStorage.setItem('wnbCart',JSON.stringify(cart));updCartCount()}
